@@ -32,3 +32,7 @@ Autonomous Kalshi trading system. Soccer (World Cup) + tennis. Bankroll $1000.
 ## Conventions
 - Python 3.12. Deps: requests, cryptography (polars later for research). No frameworks.
 - Prices as float in [0,1] internally (Kalshi cents/100). Money in cents (int) in db. UTC everywhere.
+
+## Porting research code
+- models/tennis/PORTING.md is the authoritative spec for the tennis model. Follow it exactly.
+- research/*.ipynb: never read wholesale. Grep for specific cells named in PORTING.md.
