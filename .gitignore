@@ -4,3 +4,7 @@ db/state.db*
 __pycache__/
 *.pyc
 data/
+# generated model artifacts / state (train.py output; not committed)
+*.joblib
+models/tennis/elo_state.json
+models/tennis/reliability.png
