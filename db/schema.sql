@@ -55,3 +55,14 @@ CREATE TABLE IF NOT EXISTS price_log (
   yes_bid INTEGER, yes_ask INTEGER, volume INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_price_ticker ON price_log(ticker, ts);
+
+-- soccer trigger watcher: prospective live-quote collection
+CREATE TABLE IF NOT EXISTS trigger_events (
+  id INTEGER PRIMARY KEY,
+  ts TEXT NOT NULL DEFAULT (datetime('now')),
+  fixture_id TEXT NOT NULL,
+  trigger_type TEXT NOT NULL,     -- e.g. 'big_fav_conceded_first_35'
+  state_json TEXT NOT NULL,       -- {minute, score, reds, fav_side, fav_p}
+  quotes_json TEXT,               -- all live quotes captured at/after trigger
+  acted INTEGER NOT NULL DEFAULT 0
+);

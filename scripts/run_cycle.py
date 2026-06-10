@@ -9,7 +9,7 @@ from strategy.rules import Signal
 def get_signals(client):
     """Plug models in here. Each returns list[Signal]. Stub until models land."""
     signals = []
-    # from models.soccer_wc import score as wc_score; signals += wc_score(client)
+    # from models.soccer.score import score as wc_score; signals += wc_score(client)
     # from models.tennis.score import score as tn_score; signals += tn_score(client)
     return signals
 
