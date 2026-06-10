@@ -1,0 +1,6 @@
+.env
+*.pem
+db/state.db*
+__pycache__/
+*.pyc
+data/
