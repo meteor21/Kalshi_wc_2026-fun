@@ -4,13 +4,31 @@ live endpoints are polled during tracked fixtures and never cached. Key via env
 API_FOOTBALL_KEY. Stays on an affordable tier — no SportRadar."""
 import json
 import os
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import requests
 
 BASE = "https://v3.football.api-sports.io"
 CACHE = Path(os.environ.get("SOCCER_CACHE", "data/api_football"))
+
+
+class _RateLimiter:
+    """Spread calls to <= rpm requests/minute across threads (token-bucket-lite)."""
+
+    def __init__(self, rpm):
+        self.interval = 60.0 / max(rpm, 1)
+        self.lock = threading.Lock()
+        self.next_t = 0.0
+
+    def wait(self):
+        with self.lock:
+            now = time.monotonic()
+            if now < self.next_t:
+                time.sleep(self.next_t - now)
+            self.next_t = max(now, self.next_t) + self.interval
 
 
 class APIFootball:
@@ -46,6 +64,45 @@ class APIFootball:
     def statistics(self, fixture_id):
         return self._get("/fixtures/statistics", {"fixture": fixture_id},
                          cache_key=f"stats_{fixture_id}")
+
+    # --- account / quota ---
+    def status(self):
+        """Plan + rate-limit info. Probe this first to size the pull against quota."""
+        r = self.s.get(BASE + "/status", timeout=20)
+        r.raise_for_status()
+        return r.json().get("response", {})
+
+    # --- parallel bulk fetch (rate-limited, cached, 429/5xx backoff) ---
+    def _get_retry(self, path, params, cache_key, limiter, tries=6):
+        if cache_key:
+            fp = self.cache / f"{cache_key}.json"
+            if fp.exists():
+                return json.loads(fp.read_text())
+        for i in range(tries):
+            if limiter:
+                limiter.wait()
+            r = self.s.get(BASE + path, params=params, timeout=30)
+            if r.status_code == 429 or r.status_code >= 500:
+                time.sleep(2 ** i)
+                continue
+            r.raise_for_status()
+            resp = r.json().get("response", [])
+            if cache_key:
+                fp.parent.mkdir(parents=True, exist_ok=True)
+                fp.write_text(json.dumps(resp))
+            return resp
+        raise RuntimeError(f"giving up after {tries} tries: {path} {params}")
+
+    def bulk_events(self, fixture_ids, workers=8, rpm=240):
+        """Fetch events for many fixtures in parallel (cached). Yields (fixture_id, events)."""
+        lim = _RateLimiter(rpm)
+        ids = list(fixture_ids)
+
+        def one(fid):
+            return fid, self._get_retry("/fixtures/events", {"fixture": fid}, f"events_{fid}", lim)
+
+        with ThreadPoolExecutor(max_workers=workers) as ex:
+            yield from ex.map(one, ids)
 
     # --- live (never cached) ---
     def live(self, league=None):

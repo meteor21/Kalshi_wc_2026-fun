@@ -50,8 +50,8 @@ def build_state_stream(events, fixtures, dc_lambdas):
                         continue
                     if e.type == "Goal":
                         hs += e.side == "H"; as_ += e.side == "A"
-                    elif e.type == "Card" and "Red" in str(e.detail):
-                        hr += e.side == "H"; ar += e.side == "A"
+                    elif e.type == "Card" and "red" in str(e.detail).lower():
+                        hr += e.side == "H"; ar += e.side == "A"   # straight red or 2nd yellow
     cols = ["fixture_id", "minute", "score_diff", "red_diff", "dc_lh", "dc_la",
             "h_goal_next", "a_goal_next"]
     return add_features(pd.DataFrame(rows, columns=cols))
