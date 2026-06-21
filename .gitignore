@@ -4,7 +4,9 @@ db/state.db*
 __pycache__/
 *.pyc
 data/
-# generated model artifacts / state (train.py output; not committed)
+# generated model artifacts / state (fitting output; not committed)
 *.joblib
 models/tennis/elo_state.json
 models/tennis/reliability.png
+models/soccer/dc_params.json
+models/soccer/hazard_models.joblib

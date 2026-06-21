@@ -1,10 +1,11 @@
 requests>=2.32
 cryptography>=43.0
 
-# tennis model (models/tennis): scoring on the VPS + offline train/backtest
+# tennis + soccer models: scoring on the VPS + offline fitting/backtest
 numpy>=1.26
 pandas>=2.2
 scikit-learn>=1.4
+scipy>=1.11        # Dixon-Coles MLE + market->lambda solve (soccer)
 joblib>=1.3
 # offline-only extras (train/backtest, not needed on the VPS)
 openpyxl>=3.1    # tennis-data.co.uk workbooks (backtest)

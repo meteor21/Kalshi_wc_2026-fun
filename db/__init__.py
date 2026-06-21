@@ -36,3 +36,10 @@ def log_order(c, pred_id, ticker, side, action, count, price_cents, kalshi_id=No
 def snapshot_price(c, ticker, yes_bid, yes_ask, volume):
     c.execute("INSERT INTO price_log(ticker,yes_bid,yes_ask,volume) VALUES(?,?,?,?)",
               (ticker, yes_bid, yes_ask, volume))
+
+
+def log_trigger_event(c, fixture_id, trigger_type, state_json, quotes_json=None):
+    cur = c.execute(
+        "INSERT INTO trigger_events(fixture_id,trigger_type,state_json,quotes_json) VALUES(?,?,?,?)",
+        (fixture_id, trigger_type, state_json, quotes_json))
+    return cur.lastrowid
