@@ -38,15 +38,39 @@ class APIFootball:
         self.s = requests.Session()
         self.s.headers["x-apisports-key"] = self.key or ""
 
-    def _get(self, path, params=None, cache_key=None):
-        """GET {BASE}{path}. If cache_key given, serve/store the 'response' list on disk."""
+    def _one(self, path, params, limiter, tries):
+        """Single GET with optional rate-limit + 429/5xx backoff. Returns parsed json."""
+        for i in range(tries):
+            if limiter:
+                limiter.wait()
+            r = self.s.get(BASE + path, params=params, timeout=30)
+            if r.status_code == 429 or r.status_code >= 500:
+                time.sleep(2 ** i)
+                continue
+            r.raise_for_status()
+            return r.json()
+        raise RuntimeError(f"giving up after {tries} tries: {path} {params}")
+
+    def _paged(self, path, params, limiter=None, tries=1):
+        """Fetch ALL pages (API-Football paginates) and concatenate their 'response' lists."""
+        params = dict(params or {})
+        out, page = [], 1
+        while True:
+            params["page"] = page
+            j = self._one(path, params, limiter, tries)
+            out += j.get("response", []) or []
+            total = (j.get("paging") or {}).get("total") or 1
+            if page >= total:
+                return out
+            page += 1
+
+    def _get(self, path, params=None, cache_key=None, limiter=None, tries=1):
+        """Paged GET. If cache_key given, serve/store the full 'response' list on disk."""
         if cache_key:
             fp = self.cache / f"{cache_key}.json"
             if fp.exists():
                 return json.loads(fp.read_text())
-        r = self.s.get(BASE + path, params=params or {}, timeout=20)
-        r.raise_for_status()
-        resp = r.json().get("response", [])
+        resp = self._paged(path, params, limiter, tries)
         if cache_key:
             fp.parent.mkdir(parents=True, exist_ok=True)
             fp.write_text(json.dumps(resp))
@@ -65,41 +89,23 @@ class APIFootball:
         return self._get("/fixtures/statistics", {"fixture": fixture_id},
                          cache_key=f"stats_{fixture_id}")
 
+    def odds(self, fixture_id):
+        return self._get("/odds", {"fixture": fixture_id}, cache_key=f"odds_{fixture_id}")
+
     # --- account / quota ---
     def status(self):
         """Plan + rate-limit info. Probe this first to size the pull against quota."""
-        r = self.s.get(BASE + "/status", timeout=20)
-        r.raise_for_status()
-        return r.json().get("response", {})
+        return self._one("/status", {}, None, 1).get("response", {})
 
-    # --- parallel bulk fetch (rate-limited, cached, 429/5xx backoff) ---
-    def _get_retry(self, path, params, cache_key, limiter, tries=6):
-        if cache_key:
-            fp = self.cache / f"{cache_key}.json"
-            if fp.exists():
-                return json.loads(fp.read_text())
-        for i in range(tries):
-            if limiter:
-                limiter.wait()
-            r = self.s.get(BASE + path, params=params, timeout=30)
-            if r.status_code == 429 or r.status_code >= 500:
-                time.sleep(2 ** i)
-                continue
-            r.raise_for_status()
-            resp = r.json().get("response", [])
-            if cache_key:
-                fp.parent.mkdir(parents=True, exist_ok=True)
-                fp.write_text(json.dumps(resp))
-            return resp
-        raise RuntimeError(f"giving up after {tries} tries: {path} {params}")
-
+    # --- parallel bulk fetch (rate-limited, cached, 429/5xx backoff, paginated) ---
     def bulk_events(self, fixture_ids, workers=8, rpm=240):
         """Fetch events for many fixtures in parallel (cached). Yields (fixture_id, events)."""
         lim = _RateLimiter(rpm)
         ids = list(fixture_ids)
 
         def one(fid):
-            return fid, self._get_retry("/fixtures/events", {"fixture": fid}, f"events_{fid}", lim)
+            return fid, self._get("/fixtures/events", {"fixture": fid},
+                                  cache_key=f"events_{fid}", limiter=lim, tries=6)
 
         with ThreadPoolExecutor(max_workers=workers) as ex:
             yield from ex.map(one, ids)
@@ -152,12 +158,39 @@ def clean_events(events, home_id, away_id, final_h, final_a):
     return out, (gh == final_h and ga == final_a)
 
 
+def scoring_team(event, home_id, away_id):
+    """Team credited with a goal on the scoreboard, flipping own goals to the opponent
+    (API-Football tags an own goal with the CONCEDING team)."""
+    tid = (event.get("team", {}) or {}).get("id")
+    if "own goal" in str(event.get("detail", "")).lower():
+        return away_id if tid == home_id else home_id
+    return tid
+
+
 def first_goal(events, home_id, away_id):
-    """(minute, side) of the first goal, or (None, None). Side is 'H'/'A'."""
+    """(minute, side) of the first goal, or (None, None). Side is 'H'/'A', own-goal aware."""
     goals = sorted((e for e in events if e.get("type") == "Goal"),
                    key=lambda e: (e.get("time", {}) or {}).get("elapsed", 999) or 999)
     for g in goals:
-        tid = (g.get("team", {}) or {}).get("id")
-        if tid in (home_id, away_id):
-            return (g["time"]["elapsed"], "H" if tid == home_id else "A")
+        if (g.get("team", {}) or {}).get("id") in (home_id, away_id):
+            return (g["time"]["elapsed"], "H" if scoring_team(g, home_id, away_id) == home_id else "A")
     return (None, None)
+
+
+def match_winner_odds(odds_response):
+    """[home, draw, away] decimal odds from the 'Match Winner' market, averaged across
+    bookmakers, or None. Feeds the pre-match favorite for the trigger watcher."""
+    hs, ds, aws = [], [], []
+    for row in odds_response or []:
+        for bk in row.get("bookmakers", []) or []:
+            for bet in bk.get("bets", []) or []:
+                if bet.get("name") not in ("Match Winner", "1X2"):
+                    continue
+                m = {v.get("value"): v.get("odd") for v in bet.get("values", []) or []}
+                try:
+                    hs.append(float(m["Home"])); ds.append(float(m["Draw"])); aws.append(float(m["Away"]))
+                except (KeyError, TypeError, ValueError):
+                    continue
+    if not hs:
+        return None
+    return [sum(hs) / len(hs), sum(ds) / len(ds), sum(aws) / len(aws)]

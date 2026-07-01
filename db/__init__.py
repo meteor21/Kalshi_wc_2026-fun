@@ -43,3 +43,19 @@ def log_trigger_event(c, fixture_id, trigger_type, state_json, quotes_json=None)
         "INSERT INTO trigger_events(fixture_id,trigger_type,state_json,quotes_json) VALUES(?,?,?,?)",
         (fixture_id, trigger_type, state_json, quotes_json))
     return cur.lastrowid
+
+
+def log_settlement(c, ticker, result, pnl):
+    c.execute("INSERT INTO settlements(ticker,result,pnl) VALUES(?,?,?)", (ticker, result, pnl))
+
+
+def record_equity(c, balance, open_exposure):
+    c.execute("INSERT OR REPLACE INTO equity(ts,balance,open_exposure) VALUES(datetime('now'),?,?)",
+              (balance, open_exposure))
+
+
+def daily_realized_pnl(c):
+    """Sum of today's settled P&L (UTC). Drives the daily-loss halt in run_cycle."""
+    row = c.execute(
+        "SELECT COALESCE(SUM(pnl),0.0) FROM settlements WHERE date(ts)=date('now')").fetchone()
+    return float(row[0])

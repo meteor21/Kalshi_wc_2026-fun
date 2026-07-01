@@ -5,7 +5,7 @@ held-out metrics + the empirical trigger rates. Offline (Colab/local/this box)."
 import numpy as np
 import pandas as pd
 
-from . import hazard
+from . import data, hazard
 from .dixon_coles import DixonColes
 
 # Senior men's national-team competitions for a World Cup model (API-Football league ids).
@@ -60,14 +60,16 @@ def assemble_events(events_by_fid, fixtures):
             tid = (e.get("team", {}) or {}).get("id")
             if tid not in (fx["home_team_id"], fx["away_team_id"]):
                 continue
+            if etype == "Var" and ("cancel" in detail.lower() or "disallow" in detail.lower()):
+                continue                                               # VAR-overturned
+            store_tid = tid
             if etype == "Goal":
                 if elapsed > 120 or "Penalty Shootout" in detail:      # shootout
                     continue
-                gh += tid == fx["home_team_id"]; ga += tid == fx["away_team_id"]
-            if etype == "Var" and ("cancel" in detail.lower() or "disallow" in detail.lower()):
-                continue                                               # VAR-overturned
+                store_tid = data.scoring_team(e, fx["home_team_id"], fx["away_team_id"])  # own-goal aware
+                gh += store_tid == fx["home_team_id"]; ga += store_tid == fx["away_team_id"]
             if etype in ("Goal", "Card"):
-                keep.append((fid, min(int(elapsed), 90), etype, detail, tid))
+                keep.append((fid, min(int(elapsed), 90), etype, detail, store_tid))
         if gh == fx["home_score"] and ga == fx["away_score"]:          # integrity gate
             rows.extend(keep)
         else:
